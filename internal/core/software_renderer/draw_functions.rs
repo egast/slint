@@ -192,12 +192,14 @@ pub(super) fn draw_texture_line(
     ) {
         match format {
             PixelFormat::Rgb => {
-                for pix in line_buffer {
-                    let pos = pos(3).0;
-                    let p = &data[pos..pos + 3];
-                    if alpha == 0xff {
+                let pos = pos(3).0;
+                let p = &data[pos..pos + 3];
+                if alpha == 0xff {
+                    for pix in line_buffer {
                         *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
-                    } else {
+                    }
+                } else {
+                    for pix in line_buffer {
                         pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
                             alpha, p[0], p[1], p[2],
                         )))
@@ -206,69 +208,70 @@ pub(super) fn draw_texture_line(
             }
             PixelFormat::Rgba => {
                 if color.alpha() == 0 {
+                    let pos = pos(4).0;
+                    let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
+                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                        alpha,
+                        data[pos + 0],
+                        data[pos + 1],
+                        data[pos + 2],
+                    ));
                     for pix in line_buffer {
-                        let pos = pos(4).0;
-                        let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
-                        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                            alpha,
-                            data[pos + 0],
-                            data[pos + 1],
-                            data[pos + 2],
-                        ));
                         pix.blend(c);
                     }
                 } else {
+                    let pos = pos(4).0;
+                    let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
+                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                        alpha,
+                        color.red(),
+                        color.green(),
+                        color.blue(),
+                    ));
                     for pix in line_buffer {
-                        let pos = pos(4).0;
-                        let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
-                        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                            alpha,
-                            color.red(),
-                            color.green(),
-                            color.blue(),
-                        ));
                         pix.blend(c);
                     }
                 }
             }
             PixelFormat::RgbaPremultiplied => {
                 if color.alpha() > 0 {
+                    let pos = pos(4).0;
+                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                        ((data[pos + 3] as u16 * alpha as u16) / 255) as u8,
+                        color.red(),
+                        color.green(),
+                        color.blue(),
+                    ));
                     for pix in line_buffer {
-                        let pos = pos(4).0;
-                        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                            ((data[pos + 3] as u16 * alpha as u16) / 255) as u8,
-                            color.red(),
-                            color.green(),
-                            color.blue(),
-                        ));
                         pix.blend(c);
                     }
                 } else if alpha == 0xff {
+                    let pos = pos(4).0;
+                    let c = PremultipliedRgbaColor {
+                        alpha: data[pos + 3],
+                        red: data[pos + 0],
+                        green: data[pos + 1],
+                        blue: data[pos + 2],
+                    };
                     for pix in line_buffer {
-                        let pos = pos(4).0;
-                        let c = PremultipliedRgbaColor {
-                            alpha: data[pos + 3],
-                            red: data[pos + 0],
-                            green: data[pos + 1],
-                            blue: data[pos + 2],
-                        };
                         pix.blend(c);
                     }
                 } else {
+                    let pos = pos(4).0;
+                    let c = PremultipliedRgbaColor {
+                        alpha: (data[pos + 3] as u16 * alpha as u16 / 255) as u8,
+                        red: (data[pos + 0] as u16 * alpha as u16 / 255) as u8,
+                        green: (data[pos + 1] as u16 * alpha as u16 / 255) as u8,
+                        blue: (data[pos + 2] as u16 * alpha as u16 / 255) as u8,
+                    };
                     for pix in line_buffer {
-                        let pos = pos(4).0;
-                        let c = PremultipliedRgbaColor {
-                            alpha: (data[pos + 3] as u16 * alpha as u16 / 255) as u8,
-                            red: (data[pos + 0] as u16 * alpha as u16 / 255) as u8,
-                            green: (data[pos + 1] as u16 * alpha as u16 / 255) as u8,
-                            blue: (data[pos + 2] as u16 * alpha as u16 / 255) as u8,
-                        };
                         pix.blend(c);
                     }
                 }
             }
             PixelFormat::AlphaMap => {
                 for pix in line_buffer {
+                    //For some reason when I move this statements out of the loop, fonts are messed up.
                     let pos = pos(1).0;
                     let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
                         ((data[pos] as u16 * alpha as u16) / 255) as u8,
@@ -276,32 +279,33 @@ pub(super) fn draw_texture_line(
                         color.green(),
                         color.blue(),
                     ));
+                    //
                     pix.blend(c);
                 }
             }
             PixelFormat::SignedDistanceField => {
                 const RANGE: i32 = 6;
                 let factor = (362 * 256 / delta.0) * RANGE; // 362 ≃ 255 * sqrt(2)
+                let (pos, col_f, row_f) = pos(1);
+                let (col_f, row_f) = (col_f as i32, row_f as i32);
+                let mut dist = ((data[pos] as i8 as i32) * (256 - col_f)
+                    + (data[pos + 1] as i8 as i32) * col_f)
+                    * (256 - row_f);
+                if pos + stride + 1 < data.len() {
+                    dist += ((data[pos + stride] as i8 as i32) * (256 - col_f)
+                        + (data[pos + stride + 1] as i8 as i32) * col_f)
+                        * row_f
+                } else {
+                    debug_assert_eq!(row_f, 0);
+                }
+                let a = ((((dist >> 8) * factor) >> 16) + 128).clamp(0, 255) * alpha as i32;
+                let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                    (a / 255) as u8,
+                    color.red(),
+                    color.green(),
+                    color.blue(),
+                ));
                 for pix in line_buffer {
-                    let (pos, col_f, row_f) = pos(1);
-                    let (col_f, row_f) = (col_f as i32, row_f as i32);
-                    let mut dist = ((data[pos] as i8 as i32) * (256 - col_f)
-                        + (data[pos + 1] as i8 as i32) * col_f)
-                        * (256 - row_f);
-                    if pos + stride + 1 < data.len() {
-                        dist += ((data[pos + stride] as i8 as i32) * (256 - col_f)
-                            + (data[pos + stride + 1] as i8 as i32) * col_f)
-                            * row_f
-                    } else {
-                        debug_assert_eq!(row_f, 0);
-                    }
-                    let a = ((((dist >> 8) * factor) >> 16) + 128).clamp(0, 255) * alpha as i32;
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        (a / 255) as u8,
-                        color.red(),
-                        color.green(),
-                        color.blue(),
-                    ));
                     pix.blend(c);
                 }
             }
