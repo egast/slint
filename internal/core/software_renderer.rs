@@ -36,6 +36,7 @@ use crate::{Brush, Color, Coord, ImageInner, StaticTextures};
 use alloc::rc::{Rc, Weak};
 #[cfg(not(feature = "std"))]
 use alloc::{vec, vec::Vec};
+use draw_functions::{AlphaMapFormat, RgbFormat, RgbaFormat, RgbaPremultipliedFormat, SignedDistanceFieldFormat};
 use core::cell::{Cell, RefCell};
 use core::pin::Pin;
 use euclid::Length;
@@ -896,27 +897,96 @@ fn render_window_frame_by_line(
                             }
                             SceneCommand::Texture { texture_index } => {
                                 let texture = &scene.vectors.textures[texture_index as usize];
-                                draw_functions::draw_texture_line(
+                                match texture.format {
+                                    PixelFormat::Rgb => draw_functions::draw_texture_line::<RgbFormat>(
                                     &PhysicalRect { origin: span.pos, size: span.size },
                                     scene.current_line,
                                     texture,
                                     range_buffer,
                                     extra_left_clip,
                                     extra_right_clip,
-                                );
+                                ),
+                                    PixelFormat::Rgba => draw_functions::draw_texture_line::<RgbaFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::RgbaPremultiplied => draw_functions::draw_texture_line::<RgbaPremultipliedFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::AlphaMap => draw_functions::draw_texture_line::<AlphaMapFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::SignedDistanceField => draw_functions::draw_texture_line::<SignedDistanceFieldFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                }
+                                
                             }
                             SceneCommand::SharedBuffer { shared_buffer_index } => {
                                 let texture = scene.vectors.shared_buffers
                                     [shared_buffer_index as usize]
                                     .as_texture();
-                                draw_functions::draw_texture_line(
+                                match texture.format{
+                                    PixelFormat::Rgb => draw_functions::draw_texture_line::<RgbFormat>(
                                     &PhysicalRect { origin: span.pos, size: span.size },
                                     scene.current_line,
                                     &texture,
                                     range_buffer,
                                     extra_left_clip,
                                     extra_right_clip,
-                                );
+                                ),
+                                    PixelFormat::Rgba => draw_functions::draw_texture_line::<RgbaFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    &texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::RgbaPremultiplied => draw_functions::draw_texture_line::<RgbaPremultipliedFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    &texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::AlphaMap => draw_functions::draw_texture_line::<AlphaMapFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    &texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                    PixelFormat::SignedDistanceField => draw_functions::draw_texture_line::<SignedDistanceFieldFormat>(
+                                    &PhysicalRect { origin: span.pos, size: span.size },
+                                    scene.current_line,
+                                    &texture,
+                                    range_buffer,
+                                    extra_left_clip,
+                                    extra_right_clip,
+                                ),
+                                }
                             }
                             SceneCommand::RoundedRectangle { rectangle_index } => {
                                 let rr =
@@ -1086,8 +1156,9 @@ impl<'a, T: TargetPixel> RenderToBuffer<'a, T> {
     }
 
     fn process_texture_impl(&mut self, geometry: PhysicalRect, texture: SceneTexture<'_>) {
-        self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
-            draw_functions::draw_texture_line(
+        match texture.format {
+            PixelFormat::Rgb => self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+            draw_functions::draw_texture_line::<RgbFormat>(
                 &geometry,
                 PhysicalLength::new(line),
                 &texture,
@@ -1095,7 +1166,49 @@ impl<'a, T: TargetPixel> RenderToBuffer<'a, T> {
                 extra_left_clip,
                 extra_right_clip,
             );
-        });
+        }),
+            PixelFormat::Rgba => self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+            draw_functions::draw_texture_line::<RgbaFormat>(
+                &geometry,
+                PhysicalLength::new(line),
+                &texture,
+                buffer,
+                extra_left_clip,
+                extra_right_clip,
+            );
+        }),
+            PixelFormat::RgbaPremultiplied => self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+            draw_functions::draw_texture_line::<RgbaPremultipliedFormat>(
+                &geometry,
+                PhysicalLength::new(line),
+                &texture,
+                buffer,
+                extra_left_clip,
+                extra_right_clip,
+            );
+        }),
+            PixelFormat::AlphaMap => self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+            draw_functions::draw_texture_line::<AlphaMapFormat>(
+                &geometry,
+                PhysicalLength::new(line),
+                &texture,
+                buffer,
+                extra_left_clip,
+                extra_right_clip,
+            );
+        }),
+            PixelFormat::SignedDistanceField => self.foreach_ranges(&geometry, |line, buffer, extra_left_clip, extra_right_clip| {
+            draw_functions::draw_texture_line::<SignedDistanceFieldFormat>(
+                &geometry,
+                PhysicalLength::new(line),
+                &texture,
+                buffer,
+                extra_left_clip,
+                extra_right_clip,
+            );
+        }),
+        };
+       
     }
 }
 

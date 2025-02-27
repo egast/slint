@@ -7,15 +7,105 @@
 //! on the line buffer
 
 use super::{Fixed, PhysicalLength, PhysicalRect};
-use crate::graphics::{PixelFormat, Rgb8Pixel};
+use crate::graphics::Rgb8Pixel;
 use crate::lengths::{PointLengths, SizeLengths};
 use crate::Color;
 use derive_more::{Add, Mul, Sub};
 use integer_sqrt::IntegerSquareRoot;
 
+pub struct RgbFormat {}
+pub struct RgbaFormat {}
+pub struct RgbaPremultipliedFormat {}
+pub struct AlphaMapFormat {}
+pub struct SignedDistanceFieldFormat {}
+pub trait BlendPixel {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    );
+}
+
+impl BlendPixel for RgbFormat {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    ) {
+        fetch_blend_rgb_pixel(line_buffer, data, alpha, pos);
+    }
+}
+impl BlendPixel for RgbaFormat {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    ) {
+        fetch_blend_rgba_pixel(line_buffer, data, alpha, color, pos);
+    }
+}
+impl BlendPixel for RgbaPremultipliedFormat {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    ) {
+        fetch_blend_rgba_premultiplied_pixel(line_buffer, data, alpha, color, pos);
+    }
+}
+impl BlendPixel for AlphaMapFormat {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    ) {
+        fetch_blend_alpha_map_pixel(line_buffer, data, alpha, color, pos);
+    }
+}
+impl BlendPixel for SignedDistanceFieldFormat {
+    fn fetch_blend_pixel(
+        line_buffer: &mut [impl TargetPixel],
+        data: &[u8],
+        alpha: u8,
+        color: Color,
+        stride: usize,
+        delta: Fixed<i32, 8>,
+        pos: impl FnMut(usize) -> (usize, u8, u8),
+    ) {
+        fetch_blend_signed_distance_field_pixel(
+            line_buffer,
+            data,
+            alpha,
+            color,
+            (stride, delta),
+            pos,
+        );
+    }
+}
+
 /// Draw one line of the texture in the line buffer
 ///
-pub(super) fn draw_texture_line(
+pub(super) fn draw_texture_line<T: BlendPixel>(
     span: &PhysicalRect,
     line: PhysicalLength,
     texture: &super::SceneTexture,
@@ -81,13 +171,13 @@ pub(super) fn draw_texture_line(
         let mut begin = 0;
         let row_fract = row.fract();
         while begin < len {
-            fetch_blend_pixel(
+            T::fetch_blend_pixel(
                 &mut line_buffer[begin..end],
-                format,
                 data,
                 alpha,
                 colorize,
-                (pixel_stride as usize, dy),
+                pixel_stride as usize,
+                dy,
                 #[inline(always)]
                 |bpp| {
                     let p = (pos.truncate() as usize * bpp, pos.fract(), row_fract);
@@ -147,13 +237,13 @@ pub(super) fn draw_texture_line(
         end = end.min(len);
         let mut begin = 0;
         while begin < len {
-            fetch_blend_pixel(
+            T::fetch_blend_pixel(
                 &mut line_buffer[begin..end],
-                format,
                 data,
                 alpha,
                 colorize,
-                (stride, dy),
+                stride,
+                dy,
                 #[inline(always)]
                 |_| {
                     let pos = (row.truncate() as usize * stride + col, col_fract, row.fract());
@@ -180,139 +270,166 @@ pub(super) fn draw_texture_line(
             end = end.min(len);
         }
     };
+}
 
-    fn fetch_blend_pixel(
-        line_buffer: &mut [impl TargetPixel],
-        format: PixelFormat,
-        data: &[u8],
-        alpha: u8,
-        color: Color,
-        (stride, delta): (usize, Fixed<i32, 8>),
-        mut pos: impl FnMut(usize) -> (usize, u8, u8),
-    ) {
-        match format {
-            PixelFormat::Rgb => {
-                let pos = pos(3).0;
-                let p = &data[pos..pos + 3];
-                if alpha == 0xff {
-                    for pix in line_buffer {
-                        *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
-                    }
-                } else {
-                    for pix in line_buffer {
-                        pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                            alpha, p[0], p[1], p[2],
-                        )))
-                    }
-                }
-            }
-            PixelFormat::Rgba => {
-                if color.alpha() == 0 {
-                    let pos = pos(4).0;
-                    let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        alpha,
-                        data[pos + 0],
-                        data[pos + 1],
-                        data[pos + 2],
-                    ));
-                    for pix in line_buffer {
-                        pix.blend(c);
-                    }
-                } else {
-                    let pos = pos(4).0;
-                    let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        alpha,
-                        color.red(),
-                        color.green(),
-                        color.blue(),
-                    ));
-                    for pix in line_buffer {
-                        pix.blend(c);
-                    }
-                }
-            }
-            PixelFormat::RgbaPremultiplied => {
-                if color.alpha() > 0 {
-                    let pos = pos(4).0;
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        ((data[pos + 3] as u16 * alpha as u16) / 255) as u8,
-                        color.red(),
-                        color.green(),
-                        color.blue(),
-                    ));
-                    for pix in line_buffer {
-                        pix.blend(c);
-                    }
-                } else if alpha == 0xff {
-                    let pos = pos(4).0;
-                    let c = PremultipliedRgbaColor {
-                        alpha: data[pos + 3],
-                        red: data[pos + 0],
-                        green: data[pos + 1],
-                        blue: data[pos + 2],
-                    };
-                    for pix in line_buffer {
-                        pix.blend(c);
-                    }
-                } else {
-                    let pos = pos(4).0;
-                    let c = PremultipliedRgbaColor {
-                        alpha: (data[pos + 3] as u16 * alpha as u16 / 255) as u8,
-                        red: (data[pos + 0] as u16 * alpha as u16 / 255) as u8,
-                        green: (data[pos + 1] as u16 * alpha as u16 / 255) as u8,
-                        blue: (data[pos + 2] as u16 * alpha as u16 / 255) as u8,
-                    };
-                    for pix in line_buffer {
-                        pix.blend(c);
-                    }
-                }
-            }
-            PixelFormat::AlphaMap => {
-                for pix in line_buffer {
-                    //For some reason when I move this statements out of the loop, fonts are messed up.
-                    let pos = pos(1).0;
-                    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                        ((data[pos] as u16 * alpha as u16) / 255) as u8,
-                        color.red(),
-                        color.green(),
-                        color.blue(),
-                    ));
-                    //
-                    pix.blend(c);
-                }
-            }
-            PixelFormat::SignedDistanceField => {
-                const RANGE: i32 = 6;
-                let factor = (362 * 256 / delta.0) * RANGE; // 362 ≃ 255 * sqrt(2)
-                let (pos, col_f, row_f) = pos(1);
-                let (col_f, row_f) = (col_f as i32, row_f as i32);
-                let mut dist = ((data[pos] as i8 as i32) * (256 - col_f)
-                    + (data[pos + 1] as i8 as i32) * col_f)
-                    * (256 - row_f);
-                if pos + stride + 1 < data.len() {
-                    dist += ((data[pos + stride] as i8 as i32) * (256 - col_f)
-                        + (data[pos + stride + 1] as i8 as i32) * col_f)
-                        * row_f
-                } else {
-                    debug_assert_eq!(row_f, 0);
-                }
-                let a = ((((dist >> 8) * factor) >> 16) + 128).clamp(0, 255) * alpha as i32;
-                let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
-                    (a / 255) as u8,
-                    color.red(),
-                    color.green(),
-                    color.blue(),
-                ));
-                for pix in line_buffer {
-                    pix.blend(c);
-                }
-            }
-        };
+#[inline(always)]
+fn fetch_blend_rgb_pixel(
+    line_buffer: &mut [impl TargetPixel],
+    data: &[u8],
+    alpha: u8,
+    mut pos: impl FnMut(usize) -> (usize, u8, u8),
+) {
+    if alpha == 0xff {
+        for pix in line_buffer {
+            let pos = pos(3).0;
+            let p = &data[pos..pos + 3];
+            *pix = TargetPixel::from_rgb(p[0], p[1], p[2]);
+        }
+    } else {
+        for pix in line_buffer {
+            let pos = pos(3).0;
+            let p = &data[pos..pos + 3];
+            pix.blend(PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                alpha, p[0], p[1], p[2],
+            )))
+        }
     }
 }
 
+#[inline(always)]
+fn fetch_blend_rgba_pixel(
+    line_buffer: &mut [impl TargetPixel],
+    data: &[u8],
+    alpha: u8,
+    color: Color,
+    mut pos: impl FnMut(usize) -> (usize, u8, u8),
+) {
+    if color.alpha() == 0 {
+        for pix in line_buffer {
+            let pos = pos(4).0;
+            let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
+            let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                alpha,
+                data[pos + 0],
+                data[pos + 1],
+                data[pos + 2],
+            ));
+            pix.blend(c);
+        }
+    } else {
+        for pix in line_buffer {
+            let pos = pos(4).0;
+            let alpha = ((data[pos + 3] as u16 * alpha as u16) / 255) as u8;
+            let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                alpha,
+                color.red(),
+                color.green(),
+                color.blue(),
+            ));
+            pix.blend(c);
+        }
+    }
+}
+
+#[inline(always)]
+fn fetch_blend_rgba_premultiplied_pixel(
+    line_buffer: &mut [impl TargetPixel],
+    data: &[u8],
+    alpha: u8,
+    color: Color,
+    mut pos: impl FnMut(usize) -> (usize, u8, u8),
+) {
+    if color.alpha() > 0 {
+        for pix in line_buffer {
+            let pos = pos(4).0;
+            let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+                ((data[pos + 3] as u16 * alpha as u16) / 255) as u8,
+                color.red(),
+                color.green(),
+                color.blue(),
+            ));
+            pix.blend(c);
+        }
+    } else if alpha == 0xff {
+        for pix in line_buffer {
+            let pos = pos(4).0;
+            let c = PremultipliedRgbaColor {
+                alpha: data[pos + 3],
+                red: data[pos + 0],
+                green: data[pos + 1],
+                blue: data[pos + 2],
+            };
+            pix.blend(c);
+        }
+    } else {
+        for pix in line_buffer {
+            let pos = pos(4).0;
+            let c = PremultipliedRgbaColor {
+                alpha: (data[pos + 3] as u16 * alpha as u16 / 255) as u8,
+                red: (data[pos + 0] as u16 * alpha as u16 / 255) as u8,
+                green: (data[pos + 1] as u16 * alpha as u16 / 255) as u8,
+                blue: (data[pos + 2] as u16 * alpha as u16 / 255) as u8,
+            };
+            pix.blend(c);
+        }
+    }
+}
+
+#[inline(always)]
+fn fetch_blend_alpha_map_pixel(
+    line_buffer: &mut [impl TargetPixel],
+    data: &[u8],
+    alpha: u8,
+    color: Color,
+    mut pos: impl FnMut(usize) -> (usize, u8, u8),
+) {
+    for pix in line_buffer {
+        //For some reason when I move this statements out of the loop, fonts are messed up.
+        let pos = pos(1).0;
+        let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+            ((data[pos] as u16 * alpha as u16) / 255) as u8,
+            color.red(),
+            color.green(),
+            color.blue(),
+        ));
+        //
+        pix.blend(c);
+    }
+}
+#[inline(always)]
+fn fetch_blend_signed_distance_field_pixel(
+    line_buffer: &mut [impl TargetPixel],
+    data: &[u8],
+    alpha: u8,
+    color: Color,
+    (stride, delta): (usize, Fixed<i32, 8>),
+    mut pos: impl FnMut(usize) -> (usize, u8, u8),
+) {
+    const RANGE: i32 = 6;
+    let factor = (362 * 256 / delta.0) * RANGE; // 362 ≃ 255 * sqrt(2)
+    let (pos, col_f, row_f) = pos(1);
+    let (col_f, row_f) = (col_f as i32, row_f as i32);
+    let mut dist = ((data[pos] as i8 as i32) * (256 - col_f)
+        + (data[pos + 1] as i8 as i32) * col_f)
+        * (256 - row_f);
+    if pos + stride + 1 < data.len() {
+        dist += ((data[pos + stride] as i8 as i32) * (256 - col_f)
+            + (data[pos + stride + 1] as i8 as i32) * col_f)
+            * row_f
+    } else {
+        debug_assert_eq!(row_f, 0);
+    }
+    let a = ((((dist >> 8) * factor) >> 16) + 128).clamp(0, 255) * alpha as i32;
+    let c = PremultipliedRgbaColor::premultiply(Color::from_argb_u8(
+        (a / 255) as u8,
+        color.red(),
+        color.green(),
+        color.blue(),
+    ));
+    for pix in line_buffer {
+        pix.blend(c);
+    }
+}
 /// draw one line of the rounded rectangle in the line buffer
 #[allow(clippy::unnecessary_cast)] // Coord
 pub(super) fn draw_rounded_rectangle_line(
