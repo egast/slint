@@ -440,6 +440,18 @@ pub(super) fn draw_rounded_rectangle_line(
     extra_left_clip: i16,
     extra_right_clip: i16,
 ) {
+    fn fast_sqrt(n: u32) -> u32 {
+        if n == 0 {
+            return 0;
+        }
+        let mut x = n;
+        let mut y = (x + 1) / 2;
+        while y < x {
+            x = y;
+            y = (x + n / x) / 2;
+        }
+        x
+    }
     /// This is an integer shifted by 4 bits.
     /// Note: this is not a "fixed point" because multiplication and sqrt operation operate to
     /// the shifted integer
@@ -461,7 +473,7 @@ pub(super) fn draw_rounded_rectangle_line(
             Self(self.0.saturating_sub(other.0))
         }
         pub fn sqrt(self) -> Self {
-            Self(self.0.integer_sqrt())
+            Self(fast_sqrt(self.0))
         }
     }
     impl core::ops::Mul for Shifted {
@@ -494,17 +506,21 @@ pub(super) fn draw_rounded_rectangle_line(
         (Shifted::new(width) + Shifted::new(rr.right_clip.get() + extra_right_clip))
             .saturating_sub(x)
     };
+
     let calculate_xxxx = |r: i16, y: i16| {
         let r = Shifted::new(r);
         // `y` is how far away from the center of the circle the current line is.
         let y = r - Shifted::new(y);
+        let y_squared = y * y;
+        let r_squared = r * r;
         // Circle equation: x = √(r² - y²)
         // Coordinate from the left edge: x' = r - x
-        let x2 = r - (r * r).saturating_sub(y * y).sqrt();
-        let x1 = r - (r * r).saturating_sub((y - ONE) * (y - ONE)).sqrt();
+        let x2 = r - (r_squared).saturating_sub(y_squared).sqrt();
+        let x1 = r - (r_squared).saturating_sub((y - ONE) * (y - ONE)).sqrt();
         let r2 = r.saturating_sub(border);
-        let x4 = r - (r2 * r2).saturating_sub(y * y).sqrt();
-        let x3 = r - (r2 * r2).saturating_sub((y - ONE) * (y - ONE)).sqrt();
+        let r2_squared = r2 * r2;
+        let x4 = r - (r2_squared).saturating_sub(y_squared).sqrt();
+        let x3 = r - (r2_squared).saturating_sub((y - ONE) * (y - ONE)).sqrt();
         (x1, x2, x3, x4)
     };
 
